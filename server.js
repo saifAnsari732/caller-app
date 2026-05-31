@@ -37,6 +37,12 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/followups', followupsRoutes);
 
+// health check endpoint
+app.get('/api/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date() });
+});
+
+
 // Database Connection & Server Start
 connectDB().then(() => {
   app.listen(PORT, '0.0.0.0', () => {
