@@ -12,6 +12,7 @@ const dashboardRoutes = require('./routes/dashboard');
 const notificationRoutes = require('./routes/notifications');
 const reportsRoutes = require('./routes/reports');
 const followupsRoutes = require('./routes/followups');
+const webhookRoutes = require('./routes/webhook');
 // smovbkmsokbnslondsvbdbx 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,6 +37,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/followups', followupsRoutes);
+app.use('/api/webhooks', webhookRoutes);
 
 // health check endpoint
 app.get('/api/health', (req, res) => {
