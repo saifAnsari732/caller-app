@@ -52,6 +52,12 @@ router.get('/meta', (req, res) => {
   }
 });
 
+// Helper to extract field value from Meta Lead Ads payload field_data
+function extractFieldValue(fieldData, fieldNames) {
+  const field = fieldData.find(f => fieldNames.includes(f.name.toLowerCase()));
+  return field && field.values && field.values.length > 0 ? field.values[0] : '';
+}
+
 // POST /api/webhooks/meta - Receive Lead Data
 router.post('/meta', async (req, res) => {
   const body = req.body;
@@ -63,29 +69,64 @@ router.post('/meta', async (req, res) => {
       for (const change of entry.changes) {
         if (change.value && change.value.form_id && change.value.leadgen_id) {
           try {
-            // Note: To get the actual lead details, we would typically need to make a Graph API call 
-            // using the leadgen_id and a Page Access Token.
-            // For now, we will save the raw lead ID and simulate the parsing,
-            // as this requires a live Facebook App setup and Token.
-            
-            // Example parsing of dummy data provided in webhook test payload
             const rawLeadId = change.value.leadgen_id;
+            const pageAccessToken = process.env.META_PAGE_ACCESS_TOKEN;
             
-            // In a real scenario, fetch actual lead data using Axios and Graph API here
-            // const response = await axios.get(`https://graph.facebook.com/v19.0/${rawLeadId}?access_token=${PAGE_ACCESS_TOKEN}`);
-            // const fieldData = response.data.field_data;
-            
-            // Mocking the parsed data since we don't have Graph API access token right now
+            let leadName = `Meta Lead ${rawLeadId.substring(0, 5)}`;
+            let leadMobile = '0000000000';
+            let leadEmail = '';
+            let leadCity = '';
+            let leadState = '';
+            let leadBusiness = '';
+            let leadProduct = '';
+            let leadNotes = `Received from Meta Form ID: ${change.value.form_id}. Lead ID: ${rawLeadId}`;
+
+            // If access token is set, query Facebook Graph API to retrieve actual user values
+            if (pageAccessToken) {
+              try {
+                const graphUrl = `https://graph.facebook.com/v20.0/${rawLeadId}?access_token=${pageAccessToken}`;
+                const response = await fetch(graphUrl);
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data && data.field_data) {
+                    const fields = data.field_data;
+                    leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name']) || leadName;
+                    leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile']) || leadMobile;
+                    leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
+                    leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
+                    leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
+                    leadBusiness = extractFieldValue(fields, ['business_type', 'business_name', 'company_name']) || leadBusiness;
+                    leadProduct = extractFieldValue(fields, ['product_interest', 'product', 'interest']) || leadProduct;
+                    leadNotes += `\nMetadata: Form Name="${data.form_id || ''}" Platform="Meta Lead Ads"`;
+                  } else {
+                    console.warn(`No field_data in Graph API response for lead ${rawLeadId}:`, data);
+                  }
+                } else {
+                  const errorText = await response.text();
+                  console.error(`Failed to fetch lead data from Meta Graph API (status ${response.status}):`, errorText);
+                }
+              } catch (fetchErr) {
+                console.error('Error calling Meta Graph API:', fetchErr.message);
+              }
+            } else {
+              console.log('META_PAGE_ACCESS_TOKEN is missing in environment variables. Saving lead with mock data.');
+            }
+
             const newLead = await Lead.create({
-              name: `Meta Lead ${rawLeadId.substring(0, 5)}`,
-              mobile: '0000000000', // To be extracted from Graph API
+              name: leadName,
+              mobile: leadMobile,
+              email: leadEmail,
+              city: leadCity,
+              state: leadState,
+              business_type: leadBusiness,
+              product_interest: leadProduct,
               lead_source: 'Facebook Meta Lead Ads',
               status: 'Fresh Lead',
-              notes: `Received from Meta Form ID: ${change.value.form_id}`
+              notes: leadNotes
             });
 
             await distributeLeads(newLead);
-            console.log(`Successfully received and assigned Meta lead: ${newLead.lead_id}`);
+            console.log(`Successfully received and assigned Meta lead: ${newLead.lead_id} (${newLead.name})`);
           } catch (error) {
             console.error('Error processing Meta Webhook Lead:', error);
           }
