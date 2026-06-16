@@ -94,14 +94,20 @@ router.post('/meta', async (req, res) => {
                   const data = await response.json();
                   if (data && data.field_data) {
                     const fields = data.field_data;
-                    leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name']) || leadName;
-                    leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile']) || leadMobile;
+                    leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name', 'contact_name', 'contact name']) || leadName;
+                    leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile', 'contact_number', 'contact number']) || leadMobile;
                     leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
                     leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
                     leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
-                    leadBusiness = extractFieldValue(fields, ['business_type', 'business_name', 'company_name']) || leadBusiness;
-                    leadProduct = extractFieldValue(fields, ['product_interest', 'product', 'interest']) || leadProduct;
+                    
+                    const joinAs = extractFieldValue(fields, ['आप_किस_रूप_में_जुड़ना_चाहते_हैं?', 'आप_किस_रूप_में_जुड़ना_चाहते_हैं', 'business_type', 'business_name', 'company_name']);
+                    const startWhen = extractFieldValue(fields, ['आप_कब_शुरू_करना_चाहेंगे?', 'आप_कब_शुरू_करना_चाहेंगे', 'product_interest', 'product', 'interest']);
+
+                    leadBusiness = joinAs || leadBusiness;
+                    leadProduct = startWhen || leadProduct;
                     leadNotes += `\nMetadata: Form Name="${data.form_id || ''}" Platform="Meta Lead Ads"`;
+                    if (joinAs) leadNotes += `\nJoin As: ${joinAs}`;
+                    if (startWhen) leadNotes += `\nStart Time Preference: ${startWhen}`;
                   } else {
                     console.warn(`No field_data in Graph API response for lead ${rawLeadId}:`, data);
                   }
