@@ -3,6 +3,23 @@ const router = express.Router();
 const Lead = require('../models/Lead');
 const User = require('../models/User');
 const Notification = require('../models/Notification');
+const https = require('https');
+
+function fetchJson(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+        } else {
+          reject(new Error(`Status ${res.statusCode}: ${data}`));
+        }
+      });
+    }).on('error', reject);
+  });
+}
 
 // Secret token for Meta Webhook verification
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'OILFLOW_CRM_SECRET_2026';
@@ -89,31 +106,26 @@ router.post('/meta', async (req, res) => {
             if (pageAccessToken) {
               try {
                 const graphUrl = `https://graph.facebook.com/v20.0/${rawLeadId}?access_token=${pageAccessToken}`;
-                const response = await fetch(graphUrl);
-                if (response.ok) {
-                  const data = await response.json();
-                  if (data && data.field_data) {
-                    const fields = data.field_data;
-                    leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name', 'contact_name', 'contact name']) || leadName;
-                    leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile', 'contact_number', 'contact number']) || leadMobile;
-                    leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
-                    leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
-                    leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
-                    
-                    const joinAs = extractFieldValue(fields, ['आप_किस_रूप_में_जुड़ना_चाहते_हैं?', 'आप_किस_रूप_में_जुड़ना_चाहते_हैं', 'business_type', 'business_name', 'company_name']);
-                    const startWhen = extractFieldValue(fields, ['आप_कब_शुरू_करना_चाहेंगे?', 'आप_कब_शुरू_करना_चाहेंगे', 'product_interest', 'product', 'interest']);
+                const data = await fetchJson(graphUrl);
+                
+                if (data && data.field_data) {
+                  const fields = data.field_data;
+                  leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name', 'contact_name', 'contact name']) || leadName;
+                  leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile', 'contact_number', 'contact number']) || leadMobile;
+                  leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
+                  leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
+                  leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
+                  
+                  const joinAs = extractFieldValue(fields, ['आप_किस_रूप_में_जुड़ना_चाहते_हैं?', 'आप_किस_रूप_में_जुड़ना_चाहते_हैं', 'business_type', 'business_name', 'company_name']);
+                  const startWhen = extractFieldValue(fields, ['आप_कब_शुरू_करना_चाहेंगे?', 'आप_कब_शुरू_करना_चाहेंगे', 'product_interest', 'product', 'interest']);
 
-                    leadBusiness = joinAs || leadBusiness;
-                    leadProduct = startWhen || leadProduct;
-                    leadNotes += `\nMetadata: Form Name="${data.form_id || ''}" Platform="Meta Lead Ads"`;
-                    if (joinAs) leadNotes += `\nJoin As: ${joinAs}`;
-                    if (startWhen) leadNotes += `\nStart Time Preference: ${startWhen}`;
-                  } else {
-                    console.warn(`No field_data in Graph API response for lead ${rawLeadId}:`, data);
-                  }
+                  leadBusiness = joinAs || leadBusiness;
+                  leadProduct = startWhen || leadProduct;
+                  leadNotes += `\nMetadata: Form Name="${data.form_id || ''}" Platform="Meta Lead Ads"`;
+                  if (joinAs) leadNotes += `\nJoin As: ${joinAs}`;
+                  if (startWhen) leadNotes += `\nStart Time Preference: ${startWhen}`;
                 } else {
-                  const errorText = await response.text();
-                  console.error(`Failed to fetch lead data from Meta Graph API (status ${response.status}):`, errorText);
+                  console.warn(`No field_data in Graph API response for lead ${rawLeadId}:`, data);
                 }
               } catch (fetchErr) {
                 console.error('Error calling Meta Graph API:', fetchErr.message);
