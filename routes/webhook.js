@@ -73,6 +73,49 @@ router.get('/meta', (req, res) => {
   }
 });
 
+// GET /api/webhooks/subscribe-page - Automates Subscribing App to Page
+router.get('/subscribe-page', async (req, res) => {
+  const pageAccessToken = process.env.META_PAGE_ACCESS_TOKEN;
+  if (!pageAccessToken) {
+    return res.send('Error: META_PAGE_ACCESS_TOKEN is missing in Render Environment Variables.');
+  }
+  
+  try {
+    // 1. Get Page ID
+    const meUrl = `https://graph.facebook.com/v20.0/me?access_token=${pageAccessToken}`;
+    const meResponse = await fetchJson(meUrl);
+    const pageId = meResponse.id;
+    
+    if (!pageId) return res.send('Failed to fetch Page ID from Facebook. Token might be invalid.');
+
+    // 2. Subscribe App to Page
+    const postData = JSON.stringify({ subscribed_fields: ['leadgen'] });
+    const reqOptions = {
+      hostname: 'graph.facebook.com',
+      path: `/v20.0/${pageId}/subscribed_apps?access_token=${pageAccessToken}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(postData)
+      }
+    };
+
+    const subscribeReq = https.request(reqOptions, (subRes) => {
+      let data = '';
+      subRes.on('data', chunk => data += chunk);
+      subRes.on('end', () => {
+        res.send(`<h2>Meta Page Subscription Status</h2><p>Page ID: ${pageId}</p><p>Response: ${data}</p><p>If you see {"success":true}, your App is now successfully receiving leads from your Page!</p>`);
+      });
+    });
+    subscribeReq.on('error', (e) => res.send('Error making subscription request: ' + e.message));
+    subscribeReq.write(postData);
+    subscribeReq.end();
+
+  } catch (err) {
+    res.send('Error: ' + err.message);
+  }
+});
+
 // Helper to extract field value from Meta Lead Ads payload field_data
 function extractFieldValue(fieldData, fieldNames) {
   const field = fieldData.find(f => fieldNames.includes(f.name.toLowerCase()));
