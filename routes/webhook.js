@@ -7,19 +7,23 @@ const Notification = require('../models/Notification');
 // Secret token for Meta Webhook verification
 const META_VERIFY_TOKEN = process.env.META_VERIFY_TOKEN || 'OILFLOW_CRM_SECRET_2026';
 
-// Helper function to distribute leads
+// Helper function to distribute leads using cyclic round-robin
 async function distributeLeads(lead) {
   const activeCallers = await User.find({ role: 'telecaller', status: 'active', on_leave: false }).sort({ _id: 1 });
   if (activeCallers.length === 0) return;
 
-  let assignedCounts = {};
-  for (let caller of activeCallers) {
-    assignedCounts[caller._id.toString()] = await Lead.countDocuments({ assigned_to: caller._id });
-  }
+  // Find the last assigned lead to determine who should be next
+  const lastLead = await Lead.findOne({ assigned_to: { $ne: null } }).sort({ assigned_at: -1 });
+  let chosenCaller = activeCallers[0];
 
-  // Find the caller with the fewest leads
-  activeCallers.sort((a, b) => assignedCounts[a._id.toString()] - assignedCounts[b._id.toString()]);
-  const chosenCaller = activeCallers[0];
+  if (lastLead) {
+    const lastCallerId = lastLead.assigned_to.toString();
+    const lastIndex = activeCallers.findIndex(c => c._id.toString() === lastCallerId);
+    if (lastIndex !== -1) {
+      const nextIndex = (lastIndex + 1) % activeCallers.length;
+      chosenCaller = activeCallers[nextIndex];
+    }
+  }
   
   lead.assigned_to = chosenCaller._id;
   lead.assigned_at = new Date();

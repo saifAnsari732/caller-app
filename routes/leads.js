@@ -9,7 +9,7 @@ const { authenticateToken } = require('../middleware/auth');
 
 router.use(authenticateToken);
 
-// Distribute fresh leads using round-robin
+// Distribute fresh leads using cyclic round-robin
 async function distributeLeads() {
   const activeCallers = await User.find({ role: 'telecaller', status: 'active', on_leave: false }).sort({ _id: 1 });
   if (activeCallers.length === 0) return;
@@ -17,27 +17,26 @@ async function distributeLeads() {
   const freshLeads = await Lead.find({ status: 'Fresh Lead', assigned_to: null }).sort({ _id: 1 });
   if (freshLeads.length === 0) return;
 
-  let assignedCounts = {};
-  for (let caller of activeCallers) {
-    assignedCounts[caller._id.toString()] = await Lead.countDocuments({ assigned_to: caller._id });
-  }
+  // Find the last assigned lead to determine who should be next
+  const lastLead = await Lead.findOne({ assigned_to: { $ne: null } }).sort({ assigned_at: -1 });
+  let lastCallerId = lastLead ? lastLead.assigned_to.toString() : null;
+  let lastIndex = lastCallerId ? activeCallers.findIndex(c => c._id.toString() === lastCallerId) : -1;
 
-  // Find the caller with the fewest leads (basic round robin / load balancing)
   for (let lead of freshLeads) {
-    activeCallers.sort((a, b) => assignedCounts[a._id.toString()] - assignedCounts[b._id.toString()]);
-    const chosenCaller = activeCallers[0];
+    const nextIndex = (lastIndex + 1) % activeCallers.length;
+    const chosenCaller = activeCallers[nextIndex];
     
     lead.assigned_to = chosenCaller._id;
     lead.assigned_at = new Date();
     lead.status = 'Assigned';
     await lead.save();
 
-    assignedCounts[chosenCaller._id.toString()]++;
+    lastIndex = nextIndex; // Update index for the next lead in the batch
 
     await Notification.create({
       user: chosenCaller._id,
       title: 'New Lead Assigned',
-      message: `Lead ${lead.name} (${lead.city}) has been assigned to you.`,
+      message: `Lead ${lead.name} (${lead.city || 'Unknown City'}) has been assigned to you.`,
       type: 'NEW_LEAD'
     });
   }
