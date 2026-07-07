@@ -196,11 +196,13 @@ router.post('/meta', async (req, res) => {
                   const joinAs = extractFieldValue(fields, ['आप_किस_रूप_में_जुड़ना_चाहते_हैं?', 'आप_किस_रूप_में_जुड़ना_चाहते_हैं', 'business_type', 'business_name', 'company_name']);
                   const startWhen = extractFieldValue(fields, ['आप_कब_शुरू_करना_चाहेंगे?', 'आप_कब_शुरू_करना_चाहेंगे', 'product_interest', 'product', 'interest']);
 
-                  leadBusiness = joinAs || leadBusiness;
-                  leadProduct = startWhen || leadProduct;
+                  const formatMetaValue = (val) => val && typeof val === 'string' ? val.replace(/_/g, ' ').trim() : val;
+
+                  leadBusiness = formatMetaValue(joinAs) || leadBusiness;
+                  leadProduct = formatMetaValue(startWhen) || leadProduct;
                   leadNotes += `\nMetadata: Form Name="${data.form_id || ''}" Platform="Meta Lead Ads"`;
-                  if (joinAs) leadNotes += `\nJoin As: ${joinAs}`;
-                  if (startWhen) leadNotes += `\nStart Time Preference: ${startWhen}`;
+                  if (joinAs) leadNotes += `\nJoin As: ${formatMetaValue(joinAs)}`;
+                  if (startWhen) leadNotes += `\nStart Time Preference: ${formatMetaValue(startWhen)}`;
                 } else {
                   console.warn(`No field_data in Graph API response for lead ${rawLeadId}:`, data);
                 }

@@ -8,21 +8,12 @@ async function test() {
     console.log('Connected to DB');
     
     const User = require('./models/User');
-    try {
-      const newUser = {
-        name: 'test mongoose',
-        mobile: '99052348552',
-        email: 'test12@me.com',
-        employee_id: 'tc1112',
-        password: 'password123',
-        role: 'telecaller'
-      };
-      await User.create(newUser);
-      console.log('Mongoose Inserted successfully!');
-    } catch (err) {
-      console.log('Mongoose Insert Error Code:', err.code);
-      console.log('Mongoose Insert Error Message:', err.message);
-    }
+    const db = mongoose.connection.db;
+    const usersCollection = db.collection('users');
+    const allUsers = await usersCollection.find().toArray();
+    console.log('All Users:');
+    allUsers.forEach(u => console.log(`- Name: ${u.name}, Status: ${u.status}, OnLeave: ${u.on_leave}`));
+    
   } catch (err) {
     console.error(err);
   } finally {
