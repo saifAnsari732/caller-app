@@ -226,10 +226,13 @@ router.get('/my-reports', authenticateToken, async (req, res) => {
     const callerId = new mongoose.Types.ObjectId(req.user.id);
     
     // Date filter
-    const clientDateStr = req.query.date || new Date().toISOString().split('T')[0];
-    const startDate = new Date(clientDateStr);
+    const clientStartDateStr = req.query.startDate || new Date().toISOString().split('T')[0];
+    const clientEndDateStr = req.query.endDate || new Date().toISOString().split('T')[0];
+    
+    const startDate = new Date(clientStartDateStr);
     startDate.setHours(0, 0, 0, 0);
-    const endDate = new Date(clientDateStr);
+    
+    const endDate = new Date(clientEndDateStr);
     endDate.setHours(23, 59, 59, 999);
 
     const pipeline = [
