@@ -7,7 +7,7 @@ const Call = require('../models/Call');
 const Lead = require('../models/Lead');
 const Followup = require('../models/Followup');
 const { authenticateToken } = require('../middleware/auth');
-
+ 
 router.use(authenticateToken);
 
 let imagekit = null;
@@ -23,6 +23,47 @@ if (process.env.IMAGEKIT_PUBLIC_KEY && process.env.IMAGEKIT_PRIVATE_KEY) {
 }
 
 const upload = multer({ dest: 'public/recordings/' });
+
+// POST /api/calls
+router.post('/', async (req, res) => {
+  try {
+    const { lead_id, status, notes, start_time, end_time, duration, followupDate, followupTime, followupNotes } = req.body;
+    if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
+
+    const lead = await Lead.findById(lead_id);
+    if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+    const call = await Call.create({
+      lead: lead._id,
+      caller: req.user.id,
+      status: status || 'Unknown',
+      notes: notes || '',
+      start_time: start_time || new Date(),
+      end_time: end_time || new Date(),
+      duration: duration ? parseInt(duration) : 0
+    });
+
+    if (status) {
+      lead.status = status;
+      await lead.save();
+    }
+
+    if (followupDate && followupTime) {
+      await Followup.create({
+        lead: lead._id,
+        caller: req.user.id,
+        date: followupDate,
+        time: followupTime,
+        notes: followupNotes || ''
+      });
+    }
+
+    res.status(201).json({ message: 'Call logged successfully', callId: call._id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // POST /api/calls/upload-recording
 router.post('/upload-recording', upload.single('recording'), async (req, res) => {
@@ -101,6 +142,32 @@ router.patch('/followup/:id', async (req, res) => {
     followup.completed = true;
     await followup.save();
     res.json({ message: 'Follow-up marked as completed' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/calls/my-logs
+router.get('/my-logs', async (req, res) => {
+  try {
+    const logs = await Call.find({ caller: req.user.id })
+      .populate('lead', 'name mobile lead_source')
+      .sort({ start_time: -1 })
+      .lean();
+    
+    // Map data for mobile frontend
+    const mappedLogs = logs.map(call => ({
+      id: call._id,
+      lead_name: call.lead ? call.lead.name : 'Unknown',
+      lead_mobile: call.lead ? call.lead.mobile : 'Unknown',
+      campaign: call.lead && call.lead.lead_source ? call.lead.lead_source : 'Manual Entry',
+      status: call.status,
+      start_time: call.start_time,
+      duration: call.duration,
+      origin: 'External Dialer'
+    }));
+
+    res.json(mappedLogs);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

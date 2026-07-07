@@ -25,24 +25,38 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden: Admin access required' });
     }
 
-    // Get KPI counts
-    const kpisPipeline = [
-      {
-        $group: {
-          _id: null,
-          totalLeads: { $sum: 1 },
-          freshLeads: { $sum: { $cond: [{ $eq: ['$status', 'Fresh Lead'] }, 1, 0] } },
-          assignedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Assigned'] }, 1, 0] } },
-          interestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Interested'] }, 1, 0] } },
-          followUpLeads: { $sum: { $cond: [{ $eq: ['$status', 'Follow Up'] }, 1, 0] } },
-          callbackLeads: { $sum: { $cond: [{ $eq: ['$status', 'Callback'] }, 1, 0] } },
-          closedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Closed'] }, 1, 0] } },
-          notConnectedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Not Connected'] }, 1, 0] } },
-          distributorInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Distributor Interested'] }, 1, 0] } },
-          traderInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Trader Interested'] }, 1, 0] } }
-        }
+    const { startDate, endDate } = req.query;
+    let dateMatch = {};
+    if (startDate || endDate) {
+      dateMatch.createdAt = {};
+      if (startDate) dateMatch.createdAt.$gte = new Date(startDate);
+      // for endDate, ensure it covers the whole day by adding 23:59:59 or just parsing properly
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateMatch.createdAt.$lte = end;
       }
-    ];
+    }
+
+    // Get KPI counts
+    const kpisPipeline = [];
+    if (Object.keys(dateMatch).length > 0) kpisPipeline.push({ $match: dateMatch });
+    
+    kpisPipeline.push({
+      $group: {
+        _id: null,
+        totalLeads: { $sum: 1 },
+        freshLeads: { $sum: { $cond: [{ $eq: ['$status', 'Fresh Lead'] }, 1, 0] } },
+        assignedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Assigned'] }, 1, 0] } },
+        interestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Interested'] }, 1, 0] } },
+        followUpLeads: { $sum: { $cond: [{ $eq: ['$status', 'Follow Up'] }, 1, 0] } },
+        callbackLeads: { $sum: { $cond: [{ $eq: ['$status', 'Callback'] }, 1, 0] } },
+        closedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Closed'] }, 1, 0] } },
+        notConnectedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Not Connected'] }, 1, 0] } },
+        distributorInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Distributor Interested'] }, 1, 0] } },
+        traderInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Trader Interested'] }, 1, 0] } }
+      }
+    });
     const kpisResult = await Lead.aggregate(kpisPipeline);
     const kpis = kpisResult[0] || {};
 
@@ -71,29 +85,40 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
     const chartRows = await User.aggregate(chartPipeline);
 
     // Get Conversion Analytics
-    const conversionPipeline = [
-      {
-        $group: {
-          _id: null,
-          connectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'Follow Up', 'Callback', 'Distributor Interested', 'Trader Interested', 'Closed']] }, 1, 0] } },
-          notConnectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Not Connected', 'Wrong Number', 'Rejected']] }, 1, 0] } },
-          avgDuration: { $avg: '$duration' }
-        }
+    const conversionPipeline = [];
+    if (Object.keys(dateMatch).length > 0) conversionPipeline.push({ $match: dateMatch });
+
+    conversionPipeline.push({
+      $group: {
+        _id: null,
+        connectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'Follow Up', 'Callback', 'Distributor Interested', 'Trader Interested', 'Closed']] }, 1, 0] } },
+        notConnectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Not Connected', 'Wrong Number', 'Rejected']] }, 1, 0] } },
+        avgDuration: { $avg: '$duration' }
       }
-    ];
+    });
     const convResult = await Call.aggregate(conversionPipeline);
     const convRow = convResult[0] || {};
 
-    const ratesPipeline = [
-      { $match: { assigned_to: { $ne: null } } },
-      {
-        $group: {
-          _id: null,
-          totalAssigned: { $sum: 1 },
-          totalConverted: { $sum: { $cond: [{ $in: ['$status', ['Closed', 'Distributor Interested', 'Trader Interested']] }, 1, 0] } }
-        }
+    const ratesPipeline = [];
+    const ratesMatch = { assigned_to: { $ne: null } };
+    if (startDate) {
+      ratesMatch.createdAt = ratesMatch.createdAt || {};
+      ratesMatch.createdAt.$gte = new Date(startDate);
+    }
+    if (endDate) {
+      ratesMatch.createdAt = ratesMatch.createdAt || {};
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      ratesMatch.createdAt.$lte = end;
+    }
+    ratesPipeline.push({ $match: ratesMatch });
+    ratesPipeline.push({
+      $group: {
+        _id: null,
+        totalAssigned: { $sum: 1 },
+        totalConverted: { $sum: { $cond: [{ $in: ['$status', ['Closed', 'Distributor Interested', 'Trader Interested']] }, 1, 0] } }
       }
-    ];
+    });
     const ratesResult = await Lead.aggregate(ratesPipeline);
     const rateRow = ratesResult[0] || {};
 
@@ -193,6 +218,70 @@ router.get('/telecaller-dashboard', authenticateToken, async (req, res) => {
 router.get('/export', authenticateToken, async (req, res) => {
   // Skipping exact implementation to save time for this bug fix
   res.status(501).json({ error: 'Export functionality temporarily disabled during DB migration' });
+});
+
+// GET /api/reports/my-reports
+router.get('/my-reports', authenticateToken, async (req, res) => {
+  try {
+    const callerId = new mongoose.Types.ObjectId(req.user.id);
+    
+    // Date filter
+    const clientDateStr = req.query.date || new Date().toISOString().split('T')[0];
+    const startDate = new Date(clientDateStr);
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date(clientDateStr);
+    endDate.setHours(23, 59, 59, 999);
+
+    const pipeline = [
+      { $match: { caller: callerId, start_time: { $gte: startDate, $lte: endDate } } },
+      {
+        $group: {
+          _id: null,
+          totalCalls: { $sum: 1 },
+          connectedCalls: { $sum: { $cond: [{ $ne: ['$status', 'Not Connected'] }, 1, 0] } },
+          unconnectedCalls: { $sum: { $cond: [{ $eq: ['$status', 'Not Connected'] }, 1, 0] } },
+          totalCallTime: { $sum: '$duration' },
+          avgCallDuration: { $avg: '$duration' },
+          firstCallTime: { $min: '$start_time' }
+        }
+      }
+    ];
+
+    const result = await Call.aggregate(pipeline);
+    const callStats = result[0] || {
+      totalCalls: 0,
+      connectedCalls: 0,
+      unconnectedCalls: 0,
+      totalCallTime: 0,
+      avgCallDuration: 0,
+      firstCallTime: null
+    };
+
+    // Also fetch current Lead status metrics for the telecaller
+    const kpisPipeline = [
+      { $match: { assigned_to: callerId } },
+      {
+        $group: {
+          _id: null,
+          totalAssigned: { $sum: 1 },
+          followUps: { $sum: { $cond: [{ $eq: ['$status', 'Follow Up'] }, 1, 0] } },
+          interested: { $sum: { $cond: [{ $eq: ['$status', 'Interested'] }, 1, 0] } },
+          callbackLeads: { $sum: { $cond: [{ $eq: ['$status', 'Callback'] }, 1, 0] } },
+          notConnectedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Not Connected'] }, 1, 0] } },
+          closed: { $sum: { $cond: [{ $eq: ['$status', 'Closed'] }, 1, 0] } },
+          distributorInterested: { $sum: { $cond: [{ $eq: ['$status', 'Distributor Interested'] }, 1, 0] } },
+          traderInterested: { $sum: { $cond: [{ $eq: ['$status', 'Trader Interested'] }, 1, 0] } }
+        }
+      }
+    ];
+    const kpisResult = await Lead.aggregate(kpisPipeline);
+    const leadStats = kpisResult[0] || {};
+
+    res.json({ ...callStats, leadStats });
+  } catch (error) {
+    console.error('My reports error:', error);
+    res.status(500).json({ error: 'Failed to generate my reports data' });
+  }
 });
 
 module.exports = router;

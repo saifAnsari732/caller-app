@@ -21,16 +21,19 @@ const leadSchema = new mongoose.Schema({
   assigned_at:      { type: Date, default: null }
 }, { timestamps: true });
 
-// Auto-generate lead_id before saving new documents
+const Counter = require('./Counter');
+
+// Auto-generate lead_id before saving new documents atomically
 leadSchema.pre('save', async function () {
   if (this.lead_id) return;
-  const last = await this.constructor.findOne({}, {}, { sort: { createdAt: -1 } });
-  if (!last || !last.lead_id) {
-    this.lead_id = 'L-1001';
-  } else {
-    const num = parseInt(last.lead_id.replace('L-', ''), 10);
-    this.lead_id = `L-${num + 1}`;
-  }
+  
+  const counter = await Counter.findOneAndUpdate(
+    { _id: 'leadId' },
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  );
+
+  this.lead_id = `L-${counter.seq}`;
 });
 
 module.exports = mongoose.model('Lead', leadSchema);

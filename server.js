@@ -3,6 +3,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { connectDB } = require('./database');
+const Counter = require('./models/Counter');
+const Lead = require('./models/Lead');
 
 const authRoutes = require('./routes/auth');
 const telecallerRoutes = require('./routes/telecallers');
@@ -46,10 +48,27 @@ app.get('/api/health', (req, res) => {
 
 
 // Database Connection & Server Start
-connectDB().then(() => {
+connectDB().then(async () => {
+  // Initialize Counter if missing to ensure concurrent webhook safety
+  try {
+    const lastLead = await Lead.findOne({}, {}, { sort: { createdAt: -1 } });
+    let maxNum = 1000;
+    if (lastLead && lastLead.lead_id) {
+      maxNum = parseInt(lastLead.lead_id.replace('L-', ''), 10);
+    }
+    await Counter.findOneAndUpdate(
+      { _id: 'leadId' },
+      { $max: { seq: maxNum } },
+      { upsert: true }
+    );
+    console.log(`[Init] Counter synchronized with max lead_id: ${maxNum}`);
+  } catch(e) {
+    console.error('[Init] Error synchronizing counter', e);
+  }
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log('===============================================');
-    console.log(`  OilFlow CRM Backend Server running!          `);
+    console.log(`  TradeFlow CRM Backend Server running!          `);
     console.log(`  Port: ${PORT}                                `);
     console.log(`  Address: http://localhost:${PORT}             `);
     console.log(`  Database: MongoDB Atlas (Mongoose)            `);

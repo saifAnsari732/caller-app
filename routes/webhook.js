@@ -117,9 +117,34 @@ router.get('/subscribe-page', async (req, res) => {
 });
 
 // Helper to extract field value from Meta Lead Ads payload field_data
+// Supports exact match AND partial/contains match for flexibility with Meta form field names
 function extractFieldValue(fieldData, fieldNames) {
-  const field = fieldData.find(f => fieldNames.includes(f.name.toLowerCase()));
+  // First try exact match
+  let field = fieldData.find(f => fieldNames.includes(f.name.toLowerCase().trim()));
+  // If not found, try partial/contains match
+  if (!field) {
+    field = fieldData.find(f => {
+      const fname = f.name.toLowerCase().trim();
+      return fieldNames.some(n => fname.includes(n) || n.includes(fname));
+    });
+  }
   return field && field.values && field.values.length > 0 ? field.values[0] : '';
+}
+
+// Sanitize phone number: remove spaces, dashes, +91, keep only digits, return '' if invalid
+function sanitizePhone(phone) {
+  if (!phone) return '';
+  let cleaned = String(phone).replace(/[\s\-\(\)]/g, ''); // remove spaces, dashes, brackets
+  cleaned = cleaned.replace(/^\+91/, '').replace(/^91/, ''); // remove country code
+  cleaned = cleaned.replace(/\D/g, ''); // keep only digits
+  // Must be 10 digits and not all zeros
+  if (cleaned.length === 10 && !/^0+$/.test(cleaned)) return cleaned;
+  // If 11+ digits starting with 0, strip leading 0
+  if (cleaned.length === 11 && cleaned.startsWith('0')) {
+    cleaned = cleaned.substring(1);
+    if (cleaned.length === 10 && !/^0+$/.test(cleaned)) return cleaned;
+  }
+  return ''; // invalid
 }
 
 // POST /api/webhooks/meta - Receive Lead Data
@@ -137,7 +162,7 @@ router.post('/meta', async (req, res) => {
             const pageAccessToken = process.env.META_PAGE_ACCESS_TOKEN;
             
             let leadName = `Meta Lead ${rawLeadId.substring(0, 5)}`;
-            let leadMobile = '0000000000';
+            let leadMobile = ''; // will be filled from Meta Graph API
             let leadEmail = '';
             let leadCity = '';
             let leadState = '';
@@ -153,8 +178,17 @@ router.post('/meta', async (req, res) => {
                 
                 if (data && data.field_data) {
                   const fields = data.field_data;
-                  leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name', 'contact_name', 'contact name']) || leadName;
-                  leadMobile = extractFieldValue(fields, ['phone_number', 'phone', 'mobile', 'contact_number', 'contact number']) || leadMobile;
+                  leadName = extractFieldValue(fields, ['full_name', 'fullname', 'name', 'first_name', 'last_name', 'contact_name', 'contact name', 'naam', 'applicant_name']) || leadName;
+                  // Log all available field names for debugging
+                  console.log(`[Meta Lead ${rawLeadId}] Available fields:`, fields.map(f => `${f.name}=${f.values?.[0]}`).join(', '));
+                  const rawPhone = extractFieldValue(fields, [
+                    'phone_number', 'phone', 'mobile', 'contact_number', 'contact number',
+                    'mobile_number', 'phone number', 'mobilenumber', 'phonenumber',
+                    'mob', 'cell', 'cell_number', 'whatsapp', 'whatsapp_number',
+                    'number', 'contact', 'ph_no', 'phno', 'mob_no', 'mobno',
+                    'फोन', 'मोबाइल', 'नंबर'
+                  ]);
+                  leadMobile = sanitizePhone(rawPhone);
                   leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
                   leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
                   leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
@@ -177,18 +211,41 @@ router.post('/meta', async (req, res) => {
               console.log('META_PAGE_ACCESS_TOKEN is missing in environment variables. Saving lead with mock data.');
             }
 
-            const newLead = await Lead.create({
-              name: leadName,
-              mobile: leadMobile,
-              email: leadEmail,
-              city: leadCity,
-              state: leadState,
-              business_type: leadBusiness,
-              product_interest: leadProduct,
-              lead_source: 'Facebook Meta Lead Ads',
-              status: 'Fresh Lead',
-              notes: leadNotes
-            });
+            // ✅ VALIDATION: Skip lead if mobile is invalid/missing
+            if (!leadMobile) {
+              console.warn(`[Meta Webhook] Skipping lead ${rawLeadId} — mobile number missing or invalid. Raw phone from API: "${extractFieldValue((await fetchJson(`https://graph.facebook.com/v20.0/${rawLeadId}?access_token=${process.env.META_PAGE_ACCESS_TOKEN}`).catch(()=>({field_data:[]})))?.field_data || [], ['phone_number','phone','mobile'])}". Lead NOT saved.`);
+              // Still log it for debugging but don't save
+              continue;
+            }
+
+            let newLead;
+            let retries = 5;
+            while (retries > 0) {
+              try {
+                newLead = await Lead.create({
+                  name: leadName,
+                  mobile: leadMobile,
+                  email: leadEmail,
+                  city: leadCity,
+                  state: leadState,
+                  business_type: leadBusiness,
+                  product_interest: leadProduct,
+                  lead_source: 'Facebook Meta Lead Ads',
+                  status: 'Fresh Lead',
+                  notes: leadNotes
+                });
+                break; // success
+              } catch (err) {
+                // If concurrent webhooks generate the same lead_id, wait and retry
+                if (err.code === 11000 && err.keyPattern && err.keyPattern.lead_id) {
+                  retries--;
+                  if (retries === 0) throw err;
+                  await new Promise(res => setTimeout(res, Math.floor(Math.random() * 400) + 100));
+                } else {
+                  throw err;
+                }
+              }
+            }
 
             await distributeLeads(newLead);
             console.log(`Successfully received and assigned Meta lead: ${newLead.lead_id} (${newLead.name})`);

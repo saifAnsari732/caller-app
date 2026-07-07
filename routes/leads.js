@@ -9,47 +9,87 @@ const { authenticateToken } = require('../middleware/auth');
 
 router.use(authenticateToken);
 
-// Distribute fresh leads using cyclic round-robin
+let isDistributing = false;
+
+// Distribute fresh leads using cyclic round-robin with Mutex to prevent race conditions on concurrent webhooks
 async function distributeLeads() {
-  const activeCallers = await User.find({ role: 'telecaller', status: 'active', on_leave: false }).sort({ _id: 1 });
-  if (activeCallers.length === 0) return;
+  if (isDistributing) return;
+  isDistributing = true;
 
-  const freshLeads = await Lead.find({ status: 'Fresh Lead', assigned_to: null }).sort({ _id: 1 });
-  if (freshLeads.length === 0) return;
-
-  // Find the last assigned lead to determine who should be next
-  const lastLead = await Lead.findOne({ assigned_to: { $ne: null } }).sort({ assigned_at: -1 });
-  let lastCallerId = lastLead ? lastLead.assigned_to.toString() : null;
-  let lastIndex = lastCallerId ? activeCallers.findIndex(c => c._id.toString() === lastCallerId) : -1;
-
-  for (let lead of freshLeads) {
-    const nextIndex = (lastIndex + 1) % activeCallers.length;
-    const chosenCaller = activeCallers[nextIndex];
+  try {
+    let freshLeads = await Lead.find({ status: 'Fresh Lead', assigned_to: null }).sort({ _id: 1 });
     
-    lead.assigned_to = chosenCaller._id;
-    lead.assigned_at = new Date();
-    lead.status = 'Assigned';
-    await lead.save();
+    while (freshLeads.length > 0) {
+      const activeCallers = await User.find({ role: 'telecaller', status: 'active', on_leave: false }).sort({ _id: 1 });
+      if (activeCallers.length === 0) break;
 
-    lastIndex = nextIndex; // Update index for the next lead in the batch
+      // Find the last assigned lead to determine who should be next
+      const lastLead = await Lead.findOne({ assigned_to: { $ne: null } }).sort({ assigned_at: -1 });
+      let lastCallerId = lastLead ? lastLead.assigned_to.toString() : null;
+      let lastIndex = lastCallerId ? activeCallers.findIndex(c => c._id.toString() === lastCallerId) : -1;
 
-    await Notification.create({
-      user: chosenCaller._id,
-      title: 'New Lead Assigned',
-      message: `Lead ${lead.name} (${lead.city || 'Unknown City'}) has been assigned to you.`,
-      type: 'NEW_LEAD'
-    });
+      for (let lead of freshLeads) {
+        const nextIndex = (lastIndex + 1) % activeCallers.length;
+        const chosenCaller = activeCallers[nextIndex];
+        
+        lead.assigned_to = chosenCaller._id;
+        lead.assigned_at = new Date();
+        lead.status = 'Assigned';
+        await lead.save();
+
+        lastIndex = nextIndex; // Update index for the next lead in the batch
+
+        await Notification.create({
+          user: chosenCaller._id,
+          title: 'New Lead Assigned',
+          message: `Lead ${lead.name} (${lead.city || 'Unknown City'}) has been assigned to you.`,
+          type: 'NEW_LEAD'
+        });
+      }
+
+      // Re-fetch to see if any new leads arrived while we were processing this batch
+      freshLeads = await Lead.find({ status: 'Fresh Lead', assigned_to: null }).sort({ _id: 1 });
+    }
+  } catch (error) {
+    console.error('Error in distributeLeads:', error);
+  } finally {
+    isDistributing = false;
   }
 }
 
 // GET /api/leads  — get leads (admin sees all, telecaller sees own)
 router.get('/', async (req, res) => {
   try {
-    let query = {};
-    if (req.user.role === 'telecaller') query.assigned_to = req.user.id;
-    if (req.query.status) query.status = req.query.status;
+    let filter = {};
+    if (req.user.role === 'telecaller') filter.assigned_to = req.user.id;
+    if (req.query.status) filter.status = req.query.status;
+    if (req.query.business_type) filter.business_type = req.query.business_type;
 
-    const leads = await Lead.find(query)
+    // Search query (name, mobile, city)
+    if (req.query.query) {
+      const searchRegex = new RegExp(req.query.query, 'i');
+      filter.$or = [
+        { name: searchRegex },
+        { mobile: searchRegex },
+        { city: searchRegex }
+      ];
+    }
+
+    // Date range filter
+    if (req.query.startDate || req.query.endDate) {
+      filter.createdAt = {};
+      if (req.query.startDate) {
+        filter.createdAt.$gte = new Date(req.query.startDate);
+      }
+      if (req.query.endDate) {
+        // Set to end of the day
+        const end = new Date(req.query.endDate);
+        end.setHours(23, 59, 59, 999);
+        filter.createdAt.$lte = end;
+      }
+    }
+
+    const leads = await Lead.find(filter)
       .populate('assigned_to', 'name employee_id')
       .sort({ createdAt: -1 })
       .lean();
