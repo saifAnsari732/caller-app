@@ -206,4 +206,70 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// PATCH /api/leads/bulk-assign
+router.patch('/bulk-assign', async (req, res) => {
+  try {
+    const { leadIds, callerId } = req.body;
+    if (!leadIds || !Array.isArray(leadIds) || leadIds.length === 0) {
+      return res.status(400).json({ error: 'leadIds array is required' });
+    }
+    if (!callerId) {
+      return res.status(400).json({ error: 'callerId is required' });
+    }
+
+    const caller = await User.findById(callerId);
+    if (!caller || caller.role !== 'telecaller') {
+      return res.status(400).json({ error: 'Invalid telecaller ID' });
+    }
+
+    await Lead.updateMany(
+      { _id: { $in: leadIds } },
+      { 
+        $set: { 
+          assigned_to: caller._id, 
+          assigned_at: new Date(),
+          status: 'Assigned' // Optional: move them back to Assigned status or leave as is
+        } 
+      }
+    );
+
+    res.json({ message: `${leadIds.length} leads assigned successfully to ${caller.name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/leads/transfer-caller
+router.patch('/transfer-caller', async (req, res) => {
+  try {
+    const { fromCallerId, toCallerId } = req.body;
+    if (!fromCallerId || !toCallerId) {
+      return res.status(400).json({ error: 'fromCallerId and toCallerId are required' });
+    }
+
+    const [fromCaller, toCaller] = await Promise.all([
+      User.findById(fromCallerId),
+      User.findById(toCallerId)
+    ]);
+
+    if (!fromCaller || fromCaller.role !== 'telecaller') return res.status(400).json({ error: 'Invalid fromCaller ID' });
+    if (!toCaller || toCaller.role !== 'telecaller') return res.status(400).json({ error: 'Invalid toCaller ID' });
+
+    const result = await Lead.updateMany(
+      { assigned_to: fromCaller._id },
+      { 
+        $set: { 
+          assigned_to: toCaller._id, 
+          assigned_at: new Date(),
+          status: 'Assigned'
+        } 
+      }
+    );
+
+    res.json({ message: `${result.modifiedCount} leads transferred successfully to ${toCaller.name}` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
