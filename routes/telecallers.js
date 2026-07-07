@@ -37,7 +37,7 @@ router.post('/', async (req, res) => {
     const user = await User.create({ name, mobile, email, employee_id, password, role: 'telecaller' });
     res.status(201).json({ message: 'Telecaller created successfully', telecallerId: user._id });
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: 'Mobile, Email, or Employee ID already exists' });
+    if (err.code === 11000) return res.status(400).json({ error: `Already exists: ${JSON.stringify(err.keyValue)}` });
     res.status(500).json({ error: err.message });
   }
 });
@@ -58,7 +58,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ message: 'Telecaller updated successfully' });
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: 'Mobile, Email, or Employee ID already exists' });
+    if (err.code === 11000) return res.status(400).json({ error: `Already exists: ${JSON.stringify(err.keyValue)}` });
     res.status(500).json({ error: err.message });
   }
 });
