@@ -8,7 +8,9 @@ const callSchema = new mongoose.Schema({
   start_time:    { type: Date, required: true },
   end_time:      { type: Date, required: true },
   duration:      { type: Number, required: true }, // seconds
-  recording_url: { type: String, default: null }
+  recording_url: { type: String, default: null },
+  followup_date: { type: String, default: null },
+  followup_time: { type: String, default: null }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Call', callSchema);

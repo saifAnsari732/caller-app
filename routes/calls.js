@@ -40,7 +40,9 @@ router.post('/', async (req, res) => {
       notes: notes || '',
       start_time: start_time || new Date(),
       end_time: end_time || new Date(),
-      duration: duration ? parseInt(duration) : 0
+      duration: duration ? parseInt(duration) : 0,
+      followup_date: followupDate || null,
+      followup_time: followupTime || null
     });
 
     if (status) {
@@ -162,8 +164,12 @@ router.get('/my-logs', async (req, res) => {
       lead_mobile: call.lead ? call.lead.mobile : 'Unknown',
       campaign: call.lead && call.lead.lead_source ? call.lead.lead_source : 'Manual Entry',
       status: call.status,
+      notes: call.notes || '',
+      recording_url: call.recording_url || null,
       start_time: call.start_time,
       duration: call.duration,
+      followup_date: call.followup_date || null,
+      followup_time: call.followup_time || null,
       origin: 'External Dialer'
     }));
 
