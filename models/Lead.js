@@ -17,8 +17,10 @@ const leadSchema = new mongoose.Schema({
   product_interest: { type: String, trim: true },
   lead_source:      { type: String, default: 'Facebook Meta Lead Ads' },
   status:           { type: String, enum: LEAD_STATUSES, default: 'Fresh Lead' },
+  tags:             [{ type: String, trim: true }],
   assigned_to:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  assigned_at:      { type: Date, default: null }
+  assigned_at:      { type: Date, default: null },
+  notes:            { type: String, default: '' }
 }, { timestamps: true });
 
 const Counter = require('./Counter');

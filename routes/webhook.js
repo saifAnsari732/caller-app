@@ -189,6 +189,12 @@ router.post('/meta', async (req, res) => {
                     'फोन', 'मोबाइल', 'नंबर'
                   ]);
                   leadMobile = sanitizePhone(rawPhone);
+                  
+                  if (!leadMobile && rawPhone) {
+                    leadMobile = rawPhone.toString().substring(0, 20); // Fallback to raw if sanitize fails, but cap length
+                    leadNotes += `\n[WARNING] Number did not match standard format. Raw value: ${rawPhone}`;
+                  }
+                  
                   leadEmail = extractFieldValue(fields, ['email', 'email_address']) || leadEmail;
                   leadCity = extractFieldValue(fields, ['city', 'location']) || leadCity;
                   leadState = extractFieldValue(fields, ['state', 'province']) || leadState;
@@ -211,11 +217,12 @@ router.post('/meta', async (req, res) => {
               console.log('META_PAGE_ACCESS_TOKEN is missing in environment variables. Saving lead with mock data.');
             }
 
-            // ✅ VALIDATION: Skip lead if mobile is invalid/missing
+            // o. VALIDATION: Skip lead if mobile is invalid/missing
             if (!leadMobile) {
-              console.warn(`[Meta Webhook] Skipping lead ${rawLeadId} — mobile number missing or invalid. Raw phone from API: "${extractFieldValue((await fetchJson(`https://graph.facebook.com/v20.0/${rawLeadId}?access_token=${process.env.META_PAGE_ACCESS_TOKEN}`).catch(()=>({field_data:[]})))?.field_data || [], ['phone_number','phone','mobile'])}". Lead NOT saved.`);
-              // Still log it for debugging but don't save
-              continue;
+              const rawForLog = rawLeadId;
+              console.warn(`[Meta Webhook] Lead ${rawForLog} has invalid/missing mobile. Raw phone was not perfectly 10 digits. Saving anyway to prevent lead loss.`);
+              leadMobile = '0000000000'; // Fallback so DB doesn't crash if it requires a number
+              leadNotes = `[URGENT] Invalid Phone Provided! Check Meta manually.\n` + leadNotes;
             }
 
             let newLead;

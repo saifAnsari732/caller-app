@@ -27,7 +27,7 @@ const upload = multer({ dest: 'public/recordings/' });
 // POST /api/calls
 router.post('/', async (req, res) => {
   try {
-    const { lead_id, status, notes, start_time, end_time, duration, followupDate, followupTime, followupNotes } = req.body;
+    const { lead_id, status, notes, start_time, end_time, duration, followupDate, followupTime, followupNotes, tags } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
 
     const lead = await Lead.findById(lead_id);
@@ -47,8 +47,16 @@ router.post('/', async (req, res) => {
 
     if (status) {
       lead.status = status;
-      await lead.save();
     }
+    
+    if (tags && Array.isArray(tags)) {
+      // Add new tags to existing tags uniquely
+      const existingTags = lead.tags || [];
+      const updatedTags = [...new Set([...existingTags, ...tags])];
+      lead.tags = updatedTags;
+    }
+    
+    await lead.save();
 
     if (followupDate && followupTime) {
       await Followup.create({
@@ -70,7 +78,7 @@ router.post('/', async (req, res) => {
 // POST /api/calls/upload-recording
 router.post('/upload-recording', upload.single('recording'), async (req, res) => {
   try {
-    const { lead_id, call_status, duration, notes, start_time, end_time } = req.body;
+    const { lead_id, call_status, duration, notes, start_time, end_time, followupDate, followupTime, followupNotes } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
 
     let finalRecordingUrl = null;
@@ -101,12 +109,24 @@ router.post('/upload-recording', upload.single('recording'), async (req, res) =>
       start_time: start_time || new Date(),
       end_time: end_time || new Date(),
       duration: duration ? parseInt(duration) : 0,
-      recording_url: finalRecordingUrl
+      recording_url: finalRecordingUrl,
+      followup_date: followupDate || null,
+      followup_time: followupTime || null
     });
 
     if (call_status) {
       lead.status = call_status;
       await lead.save();
+    }
+
+    if (followupDate && followupTime) {
+      await Followup.create({
+        lead: lead._id,
+        caller: req.user.id,
+        date: followupDate,
+        time: followupTime,
+        notes: followupNotes || ''
+      });
     }
 
     res.status(201).json({ message: 'Call logged successfully', callId: call._id, recording_url: finalRecordingUrl });
