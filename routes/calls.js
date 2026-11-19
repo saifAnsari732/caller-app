@@ -46,6 +46,10 @@ router.post('/', async (req, res) => {
       tags
     } = req.body;
     if (!lead_id) return res.status(400).json({ error: 'lead_id is required' });
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(lead_id)) {
+      return res.status(400).json({ error: 'Invalid lead_id format' });
+    }
 
     const lead = await Lead.findById(lead_id);
     if (!lead) return res.status(404).json({ error: 'Lead not found' });
@@ -96,6 +100,7 @@ router.post('/', async (req, res) => {
     // Automation Rule (Requirement 14): After 3 uncontacted attempts, tag for Manager Review
     const isUnconnected = ['Call Not Connected', 'Not Connected', 'Wrong Number', 'Busy', 'Switched off', 'No answer'].includes(status) ||
       ['No answer', 'Switched off', 'Number busy', 'Busy', 'Call Not Connected', 'Wrong Number'].includes(disposition);
+    lead.tags = lead.tags || [];
     if (lead.call_attempts >= 3 && isUnconnected) {
       if (!lead.tags.includes('Needs Manager Review')) {
         lead.tags.push('Needs Manager Review');

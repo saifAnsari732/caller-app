@@ -39,7 +39,22 @@ router.get('/', async (req, res) => {
       });
     }
 
-    if (req.query.status) andClauses.push({ status: req.query.status });
+    if (req.query.status) {
+      const s = String(req.query.status).trim();
+      if (/^(new|fresh|fresh lead|fresh inquiry)$/i.test(s)) {
+        andClauses.push({ status: { $in: ['New', 'Fresh Lead', 'Fresh Inquiry'] } });
+      } else if (/^(follow[_\s-]?up|follow[_\s-]?up required)$/i.test(s)) {
+        andClauses.push({ status: { $in: ['Follow Up', 'Follow-up Required', 'Follow-up', 'follow_up'] } });
+      } else if (/^callback$/i.test(s)) {
+        andClauses.push({ status: { $in: ['Callback', 'Callback Scheduled', 'callback'] } });
+      } else if (/^(closed|converted)$/i.test(s)) {
+        andClauses.push({ status: { $in: ['Closed', 'Converted'] } });
+      } else if (/^not[_\s-]?connected$/i.test(s)) {
+        andClauses.push({ status: { $in: ['Not Connected', 'Call Not Connected', 'No answer', 'Switched off', 'Busy'] } });
+      } else {
+        andClauses.push({ status: new RegExp('^' + s.replace(/_/g, '[\\s_-]?') + '$', 'i') });
+      }
+    }
     if (req.query.business_type) andClauses.push({ business_type: req.query.business_type });
     if (req.query.tag) andClauses.push({ tags: req.query.tag });
     if (req.query.campaign) andClauses.push({ campaign_name: req.query.campaign });
@@ -228,7 +243,7 @@ router.get('/:id', async (req, res) => {
       timeline.push({
         type: 'CALL',
         title: `Call: ${call.status}${call.disposition ? ` (${call.disposition})` : ''}`,
-        date: call.start_time,
+        date: call.start_time || call.createdAt || new Date(),
         description: `Talk time: ${call.duration}s. ${call.remarks || call.notes || ''}`,
         recording: !!call.recording_url,
         recording_url: call.recording_url || null,
@@ -246,6 +261,27 @@ router.get('/:id', async (req, res) => {
         description: `Scheduled for ${f.date} at ${f.time}. ${f.notes || ''}`
       });
     });
+
+    if (lead.documents && Array.isArray(lead.documents)) {
+      lead.documents.forEach(doc => {
+        timeline.push({
+          type: 'DOCUMENT',
+          title: `Document: ${doc.name || 'Attachment'}`,
+          date: doc.uploadedAt || lead.createdAt || new Date(),
+          description: `Attached file: ${doc.name || 'Document'}`,
+          document_url: doc.url || null
+        });
+      });
+    }
+
+    if (lead.status === 'Wrong Number' || lead.status === 'Invalid Lead' || (lead.tags && lead.tags.includes('Invalid Lead'))) {
+      timeline.push({
+        type: 'INVALID_FLAG',
+        title: `Lead Flagged: ${lead.status}`,
+        date: lead.updatedAt || lead.createdAt || new Date(),
+        description: `Marked as ${lead.status} by agent`
+      });
+    }
 
     timeline.sort((a, b) => new Date(b.date) - new Date(a.date));
 

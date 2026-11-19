@@ -28,11 +28,23 @@ router.get('/templates', authenticateToken, async (req, res) => {
   }
 });
 
-// 1. Admin Dashboard Stats
+// 1. Admin & Team Leader Dashboard Stats (RBAC: Admin has global visibility; Team Leader has team-scoped visibility)
 router.get('/admin-dashboard', authenticateToken, async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Forbidden: Admin access required' });
+    if (req.user.role === 'telecaller') {
+      return res.status(403).json({ error: 'Forbidden: Admin or Team Leader access required' });
+    }
+
+    let teamMemberIds = null;
+    if (req.user.role === 'team_leader' || req.user.role === 'manager') {
+      const tlDoc = await User.findById(req.user.id);
+      const teamTelecallers = await User.find({
+        $or: [
+          { team_leader_id: req.user.id },
+          { team: tlDoc?.team, role: 'telecaller' }
+        ]
+      }).select('_id');
+      teamMemberIds = [req.user.id, ...teamTelecallers.map(t => t._id)];
     }
 
     const { startDate, endDate } = req.query;
@@ -47,6 +59,13 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
       }
     }
 
+    if (teamMemberIds) {
+      dateMatch.$or = [
+        { assigned_to: { $in: teamMemberIds } },
+        { assigned_team_leader: req.user.id }
+      ];
+    }
+
     const kpisPipeline = [];
     if (Object.keys(dateMatch).length > 0) kpisPipeline.push({ $match: dateMatch });
     
@@ -54,13 +73,13 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
       $group: {
         _id: null,
         totalLeads: { $sum: 1 },
-        freshLeads: { $sum: { $cond: [{ $eq: ['$status', 'Fresh Lead'] }, 1, 0] } },
+        freshLeads: { $sum: { $cond: [{ $in: ['$status', ['Fresh Lead', 'New', 'Fresh Inquiry']] }, 1, 0] } },
         assignedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Assigned'] }, 1, 0] } },
-        interestedLeads: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'DSS Interested', 'RSS Interested', 'SS Interested']] }, 1, 0] } },
-        followUpLeads: { $sum: { $cond: [{ $eq: ['$status', 'Follow Up'] }, 1, 0] } },
-        callbackLeads: { $sum: { $cond: [{ $eq: ['$status', 'Callback'] }, 1, 0] } },
-        closedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Closed'] }, 1, 0] } },
-        notConnectedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Not Connected'] }, 1, 0] } },
+        interestedLeads: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'DSS Interested', 'RSS Interested', 'SS Interested', 'Qualified', 'Demo Scheduled', 'Demo/Meeting Scheduled']] }, 1, 0] } },
+        followUpLeads: { $sum: { $cond: [{ $in: ['$status', ['Follow Up', 'Follow-up Required', 'Follow-up']] }, 1, 0] } },
+        callbackLeads: { $sum: { $cond: [{ $in: ['$status', ['Callback', 'Callback Scheduled']] }, 1, 0] } },
+        closedLeads: { $sum: { $cond: [{ $in: ['$status', ['Closed', 'Converted']] }, 1, 0] } },
+        notConnectedLeads: { $sum: { $cond: [{ $in: ['$status', ['Not Connected', 'Call Not Connected', 'No answer', 'Switched off', 'Busy']] }, 1, 0] } },
         distributorInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Distributor Interested'] }, 1, 0] } },
         traderInterestedLeads: { $sum: { $cond: [{ $eq: ['$status', 'Trader Interested'] }, 1, 0] } }
       }
@@ -68,8 +87,12 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
     const kpisResult = await Lead.aggregate(kpisPipeline);
     const kpis = kpisResult[0] || {};
 
+    const chartMatch = { role: 'telecaller', status: 'active' };
+    if (teamMemberIds) {
+      chartMatch._id = { $in: teamMemberIds };
+    }
     const chartPipeline = [
-      { $match: { role: 'telecaller', status: 'active' } },
+      { $match: chartMatch },
       {
         $lookup: {
           from: 'leads',
@@ -81,24 +104,37 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
       {
         $project: {
           telecallerName: '$name',
-          freshLeads: { $size: { $filter: { input: '$leads', as: 'l', cond: { $eq: ['$$l.status', 'Assigned'] } } } },
-          followUps: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Follow Up', 'Callback']] } } } },
-          interested: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Interested', 'Distributor Interested', 'Trader Interested', 'DSS Interested', 'RSS Interested', 'SS Interested']] } } } },
-          notConnected: { $size: { $filter: { input: '$leads', as: 'l', cond: { $eq: ['$$l.status', 'Not Connected'] } } } },
-          closed: { $size: { $filter: { input: '$leads', as: 'l', cond: { $eq: ['$$l.status', 'Closed'] } } } }
+          freshLeads: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Assigned', 'New', 'Fresh Lead']] } } } },
+          followUps: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Follow Up', 'Follow-up Required', 'Callback']] } } } },
+          interested: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Interested', 'Distributor Interested', 'Trader Interested', 'DSS Interested', 'RSS Interested', 'SS Interested', 'Qualified']] } } } },
+          notConnected: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Not Connected', 'Call Not Connected']] } } } },
+          closed: { $size: { $filter: { input: '$leads', as: 'l', cond: { $in: ['$$l.status', ['Closed', 'Converted']] } } } }
         }
       }
     ];
     const chartRows = await User.aggregate(chartPipeline);
 
     const conversionPipeline = [];
-    if (Object.keys(dateMatch).length > 0) conversionPipeline.push({ $match: dateMatch });
+    let convMatch = {};
+    if (startDate || endDate) {
+      convMatch.createdAt = {};
+      if (startDate) convMatch.createdAt.$gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        convMatch.createdAt.$lte = end;
+      }
+    }
+    if (teamMemberIds) {
+      convMatch.caller = { $in: teamMemberIds };
+    }
+    if (Object.keys(convMatch).length > 0) conversionPipeline.push({ $match: convMatch });
 
     conversionPipeline.push({
       $group: {
         _id: null,
-        connectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'Follow Up', 'Callback', 'Distributor Interested', 'Trader Interested', 'DSS Interested', 'RSS Interested', 'SS Interested', 'Connected', 'Closed']] }, 1, 0] } },
-        notConnectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Not Connected', 'Wrong Number', 'Rejected']] }, 1, 0] } },
+        connectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Interested', 'Follow Up', 'Callback', 'Distributor Interested', 'Trader Interested', 'DSS Interested', 'RSS Interested', 'SS Interested', 'Connected', 'Closed', 'Converted']] }, 1, 0] } },
+        notConnectedCalls: { $sum: { $cond: [{ $in: ['$status', ['Not Connected', 'Call Not Connected', 'Wrong Number', 'Rejected', 'Busy', 'Switched off', 'No answer']] }, 1, 0] } },
         avgDuration: { $avg: '$duration' }
       }
     });
@@ -107,6 +143,9 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
 
     const ratesPipeline = [];
     const ratesMatch = { assigned_to: { $ne: null } };
+    if (teamMemberIds) {
+      ratesMatch.assigned_to = { $in: teamMemberIds };
+    }
     if (startDate) {
       ratesMatch.createdAt = ratesMatch.createdAt || {};
       ratesMatch.createdAt.$gte = new Date(startDate);
@@ -122,7 +161,7 @@ router.get('/admin-dashboard', authenticateToken, async (req, res) => {
       $group: {
         _id: null,
         totalAssigned: { $sum: 1 },
-        totalConverted: { $sum: { $cond: [{ $in: ['$status', ['Closed', 'Distributor Interested', 'Trader Interested']] }, 1, 0] } }
+        totalConverted: { $sum: { $cond: [{ $in: ['$status', ['Closed', 'Converted', 'Distributor Interested', 'Trader Interested']] }, 1, 0] } }
       }
     });
     const ratesResult = await Lead.aggregate(ratesPipeline);
